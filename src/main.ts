@@ -279,6 +279,27 @@ async function main(): Promise<void> {
     setTimeout(() => process.exit(0), 500);
   };
   app.get("/healthz", async () => ({ ok: true }));
+  app.get("/zalo_verifier:rest", async (req, reply) => {
+    try {
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+      const filename = "zalo_verifier" + (req.params as any).rest;
+      const candidates = [
+        path.join(process.cwd(), "data", filename),
+        path.join(process.cwd(), filename),
+        path.join("/app/data", filename),
+      ];
+      for (const p of candidates) {
+        try {
+          const content = await fs.readFile(p, "utf-8");
+          return reply.type("text/html; charset=utf-8").send(content);
+        } catch {}
+      }
+      return reply.code(404).send({ error: "File not found" });
+    } catch (e: any) {
+      return reply.code(500).send({ error: e.message });
+    }
+  });
   registerAuthRoutes(app, { users: adminUsers, sessionSecret });
   registerAdminRoutes(app, accounts, qr, guard, {
     refreshInboxIndex: refreshIndex,
@@ -300,11 +321,38 @@ async function main(): Promise<void> {
     const oaTokens = new OaTokenRepo(pool, cfg.credentialsKey);
     const oauth = new OaOAuthClient(cfg.oa.appId, cfg.oa.appSecret);
 
-    // Enrich OA contacts (name + avatar) via the OA user-detail API.
+    // Enrich OA contacts (name + avatar) via OA user-detail API with fallback to conversation history.
     oaProfileRef.resolve = async (accountId, userId) => {
       try {
-        const token = await accessTokenProvider(oaTokens, oauth, accountId)();
-        return await fetchUserProfile(token, userId);
+        const getToken = accessTokenProvider(oaTokens, oauth, accountId);
+        const token = await getToken();
+        let profile = null;
+        try {
+          profile = await fetchUserProfile(token, userId);
+        } catch {
+          profile = null;
+        }
+        if (!profile?.displayName) {
+          try {
+            let msgs = await getConversationMessages(getToken, userId, 0, 5) as any[];
+            if (!msgs || msgs.length === 0) {
+              await new Promise(r => setTimeout(r, 600));
+              msgs = await getConversationMessages(getToken, userId, 0, 5) as any[];
+            }
+            const m: any = msgs?.find((x: any) => x.from_display_name && String(x.from_id) === String(userId))
+                   || msgs?.find((x: any) => x.from_display_name);
+            if (m?.from_display_name) {
+              profile = {
+                displayName: String(m.from_display_name),
+                avatar: m.from_avatar ? String(m.from_avatar) : undefined,
+              };
+              app.log.info({ event: "oa_profile_history_resolved", userId, name: m.from_display_name }, "Resolved OA user profile from conversation history");
+            }
+          } catch (hErr) {
+            app.log.warn({ event: "oa_profile_history_failed", userId, err: hErr }, "Failed to resolve profile from conversation history");
+          }
+        }
+        return profile;
       } catch {
         return null;
       }
@@ -362,7 +410,14 @@ async function main(): Promise<void> {
     };
 
     await app.register(async (oaApp) => {
-      registerOaWebhookRoute(oaApp, { appId: cfg.oa!.appId, oaSecretKey: cfg.oa!.secretKey ?? "", accounts, onInbound, onSharedInfo });
+      registerOaWebhookRoute(oaApp, {
+        appId: cfg.oa!.appId,
+        oaSecretKey: cfg.oa!.secretKey ?? "",
+        appSecret: cfg.oa!.appSecret,
+        accounts,
+        onInbound,
+        onSharedInfo,
+      });
     });
     registerOaOAuthRoutes(app, {
       oauth, tokens: oaTokens, accounts, redirectUri: cfg.oa.redirectUri, sessionSecret,

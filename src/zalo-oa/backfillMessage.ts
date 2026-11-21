@@ -39,7 +39,7 @@ export function toIncomingMessage(raw: unknown, userId: string): { msg: Incoming
     threadId: userId,
     msgId,
     senderUid: userId,
-    senderName: "",
+    senderName: isSelf ? "" : String(r.from_display_name || ""),
     text: body,
     classified,
     isSelf,
