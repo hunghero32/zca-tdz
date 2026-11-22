@@ -20,7 +20,8 @@ services:
       retries: 5
 
   bridge:
-    image: ghcr.io/diendh/zca-bridge:latest
+    build: .
+    image: zca-bridge:zca-tdz
     container_name: zca-bridge
     restart: unless-stopped
     ports:
