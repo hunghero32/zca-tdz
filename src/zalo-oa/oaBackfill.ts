@@ -13,7 +13,7 @@ export interface HistoryClient {
 export interface BackfillCaps { maxConversations: number; maxMessagesPerConversation: number; pageSize: number }
 export interface BackfillResult { enqueued: number; maxTimeMs: number; capped: boolean }
 
-export const DEFAULT_CAPS: BackfillCaps = { maxConversations: 2000, maxMessagesPerConversation: 20, pageSize: 10 };
+export const DEFAULT_CAPS: BackfillCaps = { maxConversations: 200, maxMessagesPerConversation: 20, pageSize: 10 };
 
 /** Collect up to `maxConversations` recent conversations (no early stop — order is not guaranteed). */
 async function collectConversations(client: HistoryClient, oaId: string, caps: BackfillCaps, log: EventLog = NOOP_LOG): Promise<RecentChat[]> {
