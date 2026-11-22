@@ -44,6 +44,8 @@ function classifyContent(eventName: string, message: OaEvent["message"]): Classi
       if (lat != null && lon != null) return { kind: "fallback", text: `📍 Vị trí: https://www.google.com/maps?q=${lat},${lon}` };
       return { kind: "fallback", text: "📍 Vị trí" };
     }
+    case "user_click_chatnow":
+      return { kind: "text", text: "💬 Khách hàng đã mở cuộc trò chuyện (bấm Chat ngay trên Zalo OA)" };
     default:
       return { kind: "fallback", text: `[Tin OA loại ${eventName || "không rõ"} — mở app để xem]` };
   }
@@ -53,8 +55,10 @@ export function classifyOaMessage(event: OaEvent, isSelf: boolean): IncomingMess
   const eventName = String(event.event_name ?? "");
   // The conversation thread is always the *user*: their id is the sender on inbound,
   // and the recipient on oa_send_* (OA-side) events.
-  const userId = isSelf ? String(event.recipient?.id ?? "") : String(event.sender?.id ?? "");
-  const msgId = String(event.message?.msg_id ?? "");
+  const userId = isSelf
+    ? String(event.recipient?.id ?? "")
+    : String(event.sender?.id ?? (event as any).user_id ?? "");
+  const msgId = String(event.message?.msg_id ?? (eventName === "user_click_chatnow" ? `chatnow_${userId}_${event.timestamp || Date.now()}` : ""));
   const classified = classifyContent(eventName, event.message);
   const text = classified.kind === "media" ? classified.caption : classified.text;
   const quoteSrc: QuoteSource = {

@@ -63,7 +63,7 @@ import { parseSharedInfo } from "./zalo-oa/sharedInfo.js";
 import { applyContactInfo } from "./handlers/contactInfoSink.js";
 import { registerInfoCardRoutes } from "./admin/infoCardRoutes.js";
 import { encodeSourceId, decodeSourceId, ThreadKind } from "./routing/sourceId.js";
-import { listRecentChat, getConversationMessages } from "./zalo-oa/historyClient.js";
+import { listRecentChat, getConversationMessages, getRecentConversationMessages } from "./zalo-oa/historyClient.js";
 import { runBackfill, DEFAULT_CAPS, HistoryClient } from "./zalo-oa/oaBackfill.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -149,6 +149,7 @@ async function main(): Promise<void> {
   // OA accounts have no zca session; their contact profiles come from the OA API instead.
   // The resolver is wired in the `if (cfg.oa)` block below once OA token infra exists.
   const oaProfileRef: { resolve: ((accountId: number, userId: string) => Promise<{ displayName: string; avatar?: string } | null>) | null } = { resolve: null };
+  const oaHistoryRef: { getHistory: ((accountId: number, userId: string, limit?: number) => Promise<unknown[]>) | null } = { getHistory: null };
   const enrich = makeEnricher(sessions, chatwoot, (a, u) => (oaProfileRef.resolve ? oaProfileRef.resolve(a, u) : Promise.resolve(null)), app.log);
   const consult = new ConsultationTracker(conversations, async (accountId, sourceId, text) => {
     const convId = await conversations.getChatwootId(accountId, sourceId);
@@ -163,6 +164,7 @@ async function main(): Promise<void> {
     consult, infoRequestHook, watermarkHook,
     (accountId, groupId) => sessions.getGroupInfo(accountId, groupId).catch(() => null),
     (accountId, uid) => sessions.getUserInfo(accountId, uid).catch(() => null),
+    (accountId, userId, limit) => (oaHistoryRef.getHistory ? oaHistoryRef.getHistory(accountId, userId, limit) : Promise.resolve([])),
   );
   const notifyOutbound = makeOutboundNotifier((id) => inboxIndex.get(id) ?? null, accounts, conversations, appClientFor, app.log);
   const outbound = new OutboundHandler(
@@ -365,6 +367,16 @@ async function main(): Promise<void> {
         return profile;
       } catch {
         return null;
+      }
+    };
+
+    oaHistoryRef.getHistory = async (accountId, userId, limit = 30) => {
+      try {
+        const getToken = accessTokenProvider(oaTokens, oauth, accountId);
+        return await getRecentConversationMessages(getToken, userId, limit);
+      } catch (err) {
+        app.log.warn({ event: "oa_get_history_failed", userId, err }, "Failed to get recent conversation messages");
+        return [];
       }
     };
 

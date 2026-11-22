@@ -104,7 +104,7 @@ export function registerOaWebhookRoute(app: FastifyInstance, deps: OaWebhookDeps
         return reply.code(500).send({ ok: false });
       }
     }
-    if (!eventName.startsWith("user_send_") && !isSelf) {
+    if (!eventName.startsWith("user_send_") && !isSelf && eventName !== "user_click_chatnow") {
       // follow/unfollow/seen/etc. — acknowledge without enqueueing a message (v1).
       return reply.code(200).send({ ok: true, ignored: eventName });
     }

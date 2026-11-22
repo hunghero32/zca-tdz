@@ -8,10 +8,12 @@ import { MediaKind, MEDIA_LABEL } from "../zalo/classify.js";
 import { MediaArchive } from "../media/archive.js";
 import { encodeSourceId } from "../routing/sourceId.js";
 import { EventLog, NOOP_LOG } from "../logging/eventLog.js";
+import { toIncomingMessage } from "../zalo-oa/backfillMessage.js";
 
 type EnrichFn = (accountId: number, sourceId: string, identifier: string, senderUid: string) => Promise<void>;
 type GroupProfileResolver = (accountId: number, groupId: string) => Promise<GroupProfile | null>;
 type UserProfileResolver = (accountId: number, uid: string) => Promise<UserProfile | null>;
+type OaHistoryFetcher = (accountId: number, userId: string, limit?: number) => Promise<unknown[]>;
 
 interface ConsultHook { onInbound(accountId: number, sourceId: string): Promise<void>; }
 interface InfoRequestHook { onInbound(accountId: number, sourceId: string): Promise<void>; }
@@ -119,6 +121,7 @@ export class InboundHandler {
   private enrichedOa = new Set<string>(); // OA contacts already backfilled this process run
   private reenrichedGroups = new Set<string>(); // group contacts already re-enriched this process run
   private reenrichedUsers = new Set<string>(); // personal contacts already re-enriched this process run
+  private backfilledThreads = new Set<string>(); // threads whose history has been backfilled on-demand
 
   constructor(
     private chatwoot: ChatwootClient,
@@ -134,6 +137,7 @@ export class InboundHandler {
     private watermark?: WatermarkHook,
     private groupProfile?: GroupProfileResolver,
     private userProfile?: UserProfileResolver,
+    private oaHistory?: OaHistoryFetcher,
   ) {}
 
   async handle(accountId: number, identifier: string, msg: IncomingMessage): Promise<void> {
@@ -287,7 +291,57 @@ export class InboundHandler {
       await this.conversations.saveChatwootId(accountId, sourceId, conv.id);
       conversationId = (await this.conversations.getChatwootId(accountId, sourceId)) ?? conv.id;
     }
+
+    if (msg.kind === ZaloThreadKind.OaUser && !this.backfilledThreads.has(sourceId)) {
+      this.backfilledThreads.add(sourceId);
+      await this.backfillThreadHistory(accountId, identifier, sourceId, conversationId, msg.threadId);
+    }
     return conversationId;
+  }
+
+  private async backfillThreadHistory(
+    accountId: number,
+    identifier: string,
+    sourceId: string,
+    conversationId: number,
+    userId: string,
+  ): Promise<void> {
+    if (!this.oaHistory) return;
+    try {
+      const rawMsgs = await this.oaHistory(accountId, userId, 30);
+      if (!rawMsgs || rawMsgs.length === 0) return;
+      // Zalo conversation history is returned newest first; reverse so they are created in chronological order
+      const chronological = [...rawMsgs].reverse();
+      for (const raw of chronological) {
+        const conv = toIncomingMessage(raw, userId);
+        if (!conv) continue;
+        if (await this.mapping.findByZaloMsgId(accountId, conv.msg.msgId)) continue;
+        try {
+          const built = await this.buildOutput(accountId, conv.msg);
+          const appClient = await this.appClientFor(accountId);
+          let created: { id: number };
+          if (conv.msg.isSelf && appClient.enabled) {
+            const content = built.content ? `${SELF_PREFIX}\n${built.content}` : SELF_PREFIX;
+            created = await appClient.createOutgoingMessage(conversationId, content, built.attachments);
+          } else {
+            created = await this.chatwoot.createMessage(identifier, sourceId, conversationId, built);
+          }
+          await this.mapping.recordIfNew({
+            zaloAccountId: accountId,
+            zaloMsgId: conv.msg.msgId,
+            zaloThreadId: userId,
+            direction: conv.msg.isSelf ? "out" : "in",
+            chatwootMessageId: created.id,
+            quoteSrc: conv.msg.quoteSrc,
+          });
+        } catch (mErr) {
+          this.log.warn({ event: "backfill_msg_error", userId, msgId: conv.msg.msgId, err: errorMessage(mErr) }, "Failed to backfill historical message");
+        }
+      }
+      this.log.info({ event: "thread_history_backfilled", accountId, sourceId, count: chronological.length }, "Thread history backfilled successfully");
+    } catch (err) {
+      this.log.warn({ event: "thread_history_backfill_failed", accountId, sourceId, err: errorMessage(err) }, "Failed to backfill thread history");
+    }
   }
 
   // Create the Chatwoot contact for a new thread. Groups are named (and avatar'd) from the group
