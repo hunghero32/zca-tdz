@@ -343,18 +343,19 @@ async function main(): Promise<void> {
         }
         if (!profile?.displayName || !profile?.avatar) {
           try {
-            let msgs = await getConversationMessages(getToken, userId, 0, 5) as any[];
+            let msgs = await getConversationMessages(getToken, userId, 0, 10) as any[];
             if (!msgs || msgs.length === 0) {
               await new Promise(r => setTimeout(r, 600));
-              msgs = await getConversationMessages(getToken, userId, 0, 5) as any[];
+              msgs = await getConversationMessages(getToken, userId, 0, 10) as any[];
             }
             const m: any = msgs?.find((x: any) => (x.from_display_name && String(x.from_id) === String(userId)) || (x.to_display_name && String(x.to_id) === String(userId)))
                    || msgs?.find((x: any) => x.from_display_name || x.to_display_name);
             const resolvedName = (m && String(m.from_id) === String(userId) ? m.from_display_name : m?.to_display_name) || m?.from_display_name || m?.to_display_name;
             const resolvedAvatar = (m && String(m.from_id) === String(userId) ? m.from_avatar : m?.to_avatar) || m?.from_avatar || m?.to_avatar;
-            if (resolvedName || resolvedAvatar) {
+            const candidateName = profile?.displayName || resolvedName;
+            if (candidateName && !/^[0-9]+$/.test(candidateName)) {
               profile = {
-                displayName: String(profile?.displayName || resolvedName || userId),
+                displayName: String(candidateName),
                 avatar: profile?.avatar || (resolvedAvatar ? String(resolvedAvatar) : undefined),
                 sharedInfo: profile?.sharedInfo,
               };
@@ -363,6 +364,9 @@ async function main(): Promise<void> {
           } catch (hErr) {
             app.log.warn({ event: "oa_profile_history_failed", userId, err: hErr }, "Failed to resolve profile from conversation history");
           }
+        }
+        if (profile?.displayName && /^[0-9]+$/.test(profile.displayName)) {
+          return null; // Ignore numeric display names
         }
         return profile;
       } catch {
@@ -439,6 +443,7 @@ async function main(): Promise<void> {
         accounts,
         onInbound,
         onSharedInfo,
+        enrich,
       });
     });
     registerOaOAuthRoutes(app, {
@@ -468,7 +473,7 @@ async function main(): Promise<void> {
         }
       } else if (kind === ThreadKind.OaUser && oaProfileRef.resolve) {
         const p = await oaProfileRef.resolve(accountId, threadId).catch(() => null);
-        if (p?.avatar) {
+        if (p?.displayName && !/^[0-9]+$/.test(p.displayName)) {
           await chatwoot.updateContact(inboxIdentifier, sourceId, { name: p.displayName, avatarUrl: p.avatar });
           return true;
         }
@@ -538,10 +543,16 @@ async function main(): Promise<void> {
   const cookieTimer = setInterval(() => { void supervisor.persistAllCookies(); }, 30 * 60 * 1000);
   cookieTimer.unref();
 
+  // Periodic contact profile and avatar sync (every 15 minutes), and once 5s after startup
+  setTimeout(() => { void runAvatarSyncImpl(); }, 5000);
+  const syncTimer = setInterval(() => { void runAvatarSyncImpl(); }, 15 * 60 * 1000);
+  syncTimer.unref();
+
   async function shutdown(): Promise<void> {
     worker.stop();
     clearInterval(indexRefresh);
     clearInterval(cookieTimer);
+    clearInterval(syncTimer);
     try { await supervisor.persistAllCookies(); } catch { /* ignore */ }
     try { await sessions.stopAll(); } catch { /* ignore */ }
     try { await app.close(); } catch { /* ignore */ }

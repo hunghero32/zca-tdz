@@ -10,7 +10,7 @@ import { encodeSourceId } from "../routing/sourceId.js";
 import { EventLog, NOOP_LOG } from "../logging/eventLog.js";
 import { toIncomingMessage } from "../zalo-oa/backfillMessage.js";
 
-type EnrichFn = (accountId: number, sourceId: string, identifier: string, senderUid: string) => Promise<void>;
+type EnrichFn = (accountId: number, sourceId: string, identifier: string, senderUid: string) => Promise<boolean | void>;
 type GroupProfileResolver = (accountId: number, groupId: string) => Promise<GroupProfile | null>;
 type UserProfileResolver = (accountId: number, uid: string) => Promise<UserProfile | null>;
 type OaHistoryFetcher = (accountId: number, userId: string, limit?: number) => Promise<unknown[]>;
@@ -272,13 +272,13 @@ export class InboundHandler {
   private async resolveConversation(accountId: number, identifier: string, sourceId: string, msg: IncomingMessage): Promise<number> {
     const existing = await this.chatwoot.getContact(identifier, sourceId);
     const enrichKey = `${identifier}:${sourceId}`;
+    const isUnresolvedName = !existing?.name || /^[0-9]+$/.test(existing.name) || /^Khách Zalo OA #[0-9]+$/.test(existing.name);
     if (!existing) {
       await this.createContactForThread(accountId, identifier, sourceId, msg, enrichKey);
-    } else if (msg.kind === ZaloThreadKind.OaUser && !this.enrichedOa.has(enrichKey)) {
-      // OA contacts can't be named at create-time (no zca session); backfill name/avatar
-      // once per process run for contacts that may still show the raw user id.
-      this.enrichedOa.add(enrichKey);
-      this.enrich(accountId, sourceId, identifier, msg.threadId).catch(() => {});
+    } else if (msg.kind === ZaloThreadKind.OaUser && (!this.enrichedOa.has(enrichKey) || isUnresolvedName)) {
+      this.enrich(accountId, sourceId, identifier, msg.threadId)
+        .then((ok) => { if (ok) this.enrichedOa.add(enrichKey); })
+        .catch(() => {});
     } else if (msg.kind === ZaloThreadKind.Group && !this.reenrichedGroups.has(enrichKey)) {
       // An existing group contact may still carry a member's name from before this fix; correct
       // it to the real group name/avatar once per process run. enrich() resolves groups from the
@@ -372,11 +372,13 @@ export class InboundHandler {
       return;
     }
     // OA User thread:
-    const instantName = msg.senderName || msg.threadId;
+    const isNumeric = /^[0-9]+$/.test(msg.threadId);
+    const instantName = msg.senderName || (isNumeric && msg.threadId.length > 4 ? `Khách Zalo OA #${msg.threadId.slice(-4)}` : msg.threadId);
     const avatarUrl = msg.senderAvatar;
     await this.chatwoot.createContact(identifier, { sourceId, name: instantName, avatarUrl });
-    this.enrichedOa.add(enrichKey);
-    this.enrich(accountId, sourceId, identifier, msg.threadId).catch(() => {});
+    this.enrich(accountId, sourceId, identifier, msg.threadId)
+      .then((ok) => { if (ok) this.enrichedOa.add(enrichKey); })
+      .catch(() => {});
   }
 
   private async resolveUserProfile(accountId: number, uid: string): Promise<UserProfile | null> {

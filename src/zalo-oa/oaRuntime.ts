@@ -39,7 +39,8 @@ export async function fetchUserProfile(
   if (!d?.display_name) return null;
   const sharedInfo = d.shared_info ? (parseSharedInfo({ shared_info: d.shared_info }) ?? undefined) : undefined;
   const out: { displayName: string; avatar?: string; sharedInfo?: ContactInfo } = { displayName: String(d.display_name) };
-  if (d.avatar) out.avatar = String(d.avatar);
+  const avatar = d.avatars?.["240"] || d.avatars?.["120"] || d.avatar;
+  if (avatar) out.avatar = String(avatar);
   if (sharedInfo) out.sharedInfo = sharedInfo;
   return out;
 }

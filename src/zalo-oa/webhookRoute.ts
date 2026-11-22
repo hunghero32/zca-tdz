@@ -13,6 +13,7 @@ export interface OaWebhookDeps {
   accounts: Pick<AccountRepo, "findByOaId">;
   onInbound: (accountId: number, msg: IncomingMessage) => void;
   onSharedInfo?: (accountId: number, event: any) => Promise<void>;
+  enrich?: (accountId: number, sourceId: string, identifier: string, senderUid: string) => Promise<boolean | void>;
 }
 
 export function registerOaWebhookRoute(app: FastifyInstance, deps: OaWebhookDeps): void {
@@ -104,8 +105,19 @@ export function registerOaWebhookRoute(app: FastifyInstance, deps: OaWebhookDeps
         return reply.code(500).send({ ok: false });
       }
     }
+    if (eventName === "follow") {
+      const followerId = String((json as any)?.follower?.id ?? (json as any)?.user_id ?? "");
+      req.log.info({ event: "oa_user_followed", resolvedOaId, followerId }, "User followed OA");
+      if (followerId && account) {
+        const sourceId = `oa-user:${followerId}`;
+        deps.enrich?.(account.id, sourceId, account.chatwootInboxIdentifier, followerId).catch((err) => {
+          req.log.warn({ event: "oa_follow_enrich_failed", followerId, err }, "Failed to enrich follower");
+        });
+      }
+      return reply.code(200).send({ ok: true, followed: followerId });
+    }
     if (!eventName.startsWith("user_send_") && !isSelf && eventName !== "user_click_chatnow") {
-      // follow/unfollow/seen/etc. — acknowledge without enqueueing a message (v1).
+      // unfollow/seen/etc. — acknowledge without enqueueing a message (v1).
       return reply.code(200).send({ ok: true, ignored: eventName });
     }
     if (!account) {
