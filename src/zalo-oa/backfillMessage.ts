@@ -35,12 +35,14 @@ export function toIncomingMessage(raw: unknown, userId: string): { msg: Incoming
   const classified = classify(type, text, url);
   const body = classified.kind === "media" ? classified.caption : (classified.kind === "text" ? classified.text : text);
   const customerName = isSelf ? String(r.to_display_name || "") : String(r.from_display_name || "");
+  const customerAvatar = (isSelf ? r.to_avatar : r.from_avatar) || r.from_avatar || r.to_avatar;
   const msg: IncomingMessage = {
     kind: ZaloThreadKind.OaUser,
     threadId: userId,
     msgId,
     senderUid: userId,
     senderName: customerName,
+    ...(customerAvatar ? { senderAvatar: String(customerAvatar) } : {}),
     text: body,
     classified,
     isSelf,

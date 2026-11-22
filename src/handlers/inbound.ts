@@ -3,7 +3,7 @@ import { ChatwootClient, Attachment } from "../chatwoot/client.js";
 import type { AppClientFor } from "../chatwoot/appClientFactory.js";
 import { MappingRepo } from "../store/mappingRepo.js";
 import { ConversationRepo } from "../store/conversationRepo.js";
-import { IncomingMessage, ZaloThreadKind, GroupProfile, toRoutingKindOf } from "../zalo/types.js";
+import { IncomingMessage, ZaloThreadKind, GroupProfile, UserProfile, toRoutingKindOf } from "../zalo/types.js";
 import { MediaKind, MEDIA_LABEL } from "../zalo/classify.js";
 import { MediaArchive } from "../media/archive.js";
 import { encodeSourceId } from "../routing/sourceId.js";
@@ -11,6 +11,7 @@ import { EventLog, NOOP_LOG } from "../logging/eventLog.js";
 
 type EnrichFn = (accountId: number, sourceId: string, identifier: string, senderUid: string) => Promise<void>;
 type GroupProfileResolver = (accountId: number, groupId: string) => Promise<GroupProfile | null>;
+type UserProfileResolver = (accountId: number, uid: string) => Promise<UserProfile | null>;
 
 interface ConsultHook { onInbound(accountId: number, sourceId: string): Promise<void>; }
 interface InfoRequestHook { onInbound(accountId: number, sourceId: string): Promise<void>; }
@@ -117,6 +118,7 @@ export class InboundHandler {
   private locks = new Map<string, Promise<unknown>>(); // per source_id serialization
   private enrichedOa = new Set<string>(); // OA contacts already backfilled this process run
   private reenrichedGroups = new Set<string>(); // group contacts already re-enriched this process run
+  private reenrichedUsers = new Set<string>(); // personal contacts already re-enriched this process run
 
   constructor(
     private chatwoot: ChatwootClient,
@@ -131,6 +133,7 @@ export class InboundHandler {
     private infoRequest?: InfoRequestHook,
     private watermark?: WatermarkHook,
     private groupProfile?: GroupProfileResolver,
+    private userProfile?: UserProfileResolver,
   ) {}
 
   async handle(accountId: number, identifier: string, msg: IncomingMessage): Promise<void> {
@@ -267,13 +270,16 @@ export class InboundHandler {
       // OA contacts can't be named at create-time (no zca session); backfill name/avatar
       // once per process run for contacts that may still show the raw user id.
       this.enrichedOa.add(enrichKey);
-      this.enrich(accountId, sourceId, identifier, msg.senderUid).catch(() => {});
+      this.enrich(accountId, sourceId, identifier, msg.threadId).catch(() => {});
     } else if (msg.kind === ZaloThreadKind.Group && !this.reenrichedGroups.has(enrichKey)) {
       // An existing group contact may still carry a member's name from before this fix; correct
       // it to the real group name/avatar once per process run. enrich() resolves groups from the
       // sourceId (group:<threadId>), so senderUid is passed only for signature parity.
       this.reenrichedGroups.add(enrichKey);
-      this.enrich(accountId, sourceId, identifier, msg.senderUid).catch(() => {});
+      this.enrich(accountId, sourceId, identifier, msg.threadId).catch(() => {});
+    } else if (msg.kind === ZaloThreadKind.User && !this.reenrichedUsers.has(enrichKey)) {
+      this.reenrichedUsers.add(enrichKey);
+      this.enrich(accountId, sourceId, identifier, msg.threadId).catch(() => {});
     }
     let conversationId = await this.conversations.getChatwootId(accountId, sourceId);
     if (!conversationId) {
@@ -295,16 +301,32 @@ export class InboundHandler {
       if (group) this.reenrichedGroups.add(enrichKey);
       return;
     }
-    // The contact represents the thread party (= msg.threadId), never the message sender — which
-    // for a self/operator-initiated message is the operator. Take the sender name as the instant
-    // name only when the sender IS the thread party (an incoming, non-self message); otherwise use
-    // threadId as a placeholder until enrich() resolves the party's real name.
-    const instantName = msg.kind === ZaloThreadKind.OaUser
-      ? (msg.senderName || msg.threadId)
-      : ((!msg.isSelf && msg.senderName) || msg.threadId);
-    await this.chatwoot.createContact(identifier, { sourceId, name: instantName });
+    if (msg.kind === ZaloThreadKind.User) {
+      const user = await this.resolveUserProfile(accountId, msg.threadId);
+      const instantName = user?.displayName || (!msg.isSelf && msg.senderName) || msg.threadId;
+      const avatarUrl = user?.avatar || msg.senderAvatar;
+      await this.chatwoot.createContact(identifier, { sourceId, name: instantName, avatarUrl });
+      if (user) {
+        this.reenrichedUsers.add(enrichKey);
+      } else {
+        this.enrich(accountId, sourceId, identifier, msg.threadId).catch(() => {});
+      }
+      return;
+    }
+    // OA User thread:
+    const instantName = msg.senderName || msg.threadId;
+    const avatarUrl = msg.senderAvatar;
+    await this.chatwoot.createContact(identifier, { sourceId, name: instantName, avatarUrl });
     this.enrichedOa.add(enrichKey);
     this.enrich(accountId, sourceId, identifier, msg.threadId).catch(() => {});
+  }
+
+  private async resolveUserProfile(accountId: number, uid: string): Promise<UserProfile | null> {
+    try {
+      return (await this.userProfile?.(accountId, uid)) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private async resolveGroupProfile(accountId: number, groupId: string): Promise<GroupProfile | null> {

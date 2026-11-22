@@ -33,8 +33,9 @@ export function makeEnricher(
       }
       return;
     }
+    const targetUid = threadId || senderUid;
     try {
-      const profile = await sessions.getUserInfo(accountId, senderUid);
+      const profile = await sessions.getUserInfo(accountId, targetUid);
       await chatwoot.updateContact(identifier, sourceId, { name: profile.displayName, avatarUrl: profile.avatar });
       log.info({ event: "contact_enriched", accountId, sourceId, source: "zca" }, "contact enriched");
       return;
@@ -43,7 +44,7 @@ export function makeEnricher(
     }
     if (!oaProfile) return;
     try {
-      const p = await oaProfile(accountId, senderUid);
+      const p = await oaProfile(accountId, targetUid);
       if (p?.displayName) {
         await chatwoot.updateContact(identifier, sourceId, { name: p.displayName, avatarUrl: p.avatar });
         log.info({ event: "contact_enriched", accountId, sourceId, source: "oa" }, "contact enriched");
