@@ -339,14 +339,16 @@ async function main(): Promise<void> {
               await new Promise(r => setTimeout(r, 600));
               msgs = await getConversationMessages(getToken, userId, 0, 5) as any[];
             }
-            const m: any = msgs?.find((x: any) => x.from_display_name && String(x.from_id) === String(userId))
-                   || msgs?.find((x: any) => x.from_display_name);
-            if (m?.from_display_name) {
+            const m: any = msgs?.find((x: any) => (x.from_display_name && String(x.from_id) === String(userId)) || (x.to_display_name && String(x.to_id) === String(userId)))
+                   || msgs?.find((x: any) => x.from_display_name || x.to_display_name);
+            const resolvedName = (m && String(m.from_id) === String(userId) ? m.from_display_name : m?.to_display_name) || m?.from_display_name || m?.to_display_name;
+            const resolvedAvatar = (m && String(m.from_id) === String(userId) ? m.from_avatar : m?.to_avatar) || m?.from_avatar || m?.to_avatar;
+            if (resolvedName) {
               profile = {
-                displayName: String(m.from_display_name),
-                avatar: m.from_avatar ? String(m.from_avatar) : undefined,
+                displayName: String(resolvedName),
+                avatar: resolvedAvatar ? String(resolvedAvatar) : undefined,
               };
-              app.log.info({ event: "oa_profile_history_resolved", userId, name: m.from_display_name }, "Resolved OA user profile from conversation history");
+              app.log.info({ event: "oa_profile_history_resolved", userId, name: resolvedName }, "Resolved OA user profile from conversation history");
             }
           } catch (hErr) {
             app.log.warn({ event: "oa_profile_history_failed", userId, err: hErr }, "Failed to resolve profile from conversation history");

@@ -143,6 +143,7 @@ export class InboundHandler {
   }
 
   private async process(accountId: number, identifier: string, sourceId: string, msg: IncomingMessage): Promise<void> {
+    if (await this.mapping.findByZaloMsgId(accountId, msg.msgId)) return;
     if (msg.isSelf) { await this.processSelf(accountId, identifier, sourceId, msg); return; }
 
     let conversationId = await this.resolveConversation(accountId, identifier, sourceId, msg);
@@ -298,7 +299,9 @@ export class InboundHandler {
     // for a self/operator-initiated message is the operator. Take the sender name as the instant
     // name only when the sender IS the thread party (an incoming, non-self message); otherwise use
     // threadId as a placeholder until enrich() resolves the party's real name.
-    const instantName = (!msg.isSelf && msg.senderName) || msg.threadId;
+    const instantName = msg.kind === ZaloThreadKind.OaUser
+      ? (msg.senderName || msg.threadId)
+      : ((!msg.isSelf && msg.senderName) || msg.threadId);
     await this.chatwoot.createContact(identifier, { sourceId, name: instantName });
     this.enrichedOa.add(enrichKey);
     this.enrich(accountId, sourceId, identifier, msg.threadId).catch(() => {});
