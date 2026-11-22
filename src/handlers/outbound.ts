@@ -54,6 +54,10 @@ export class OutboundHandler {
     // Anti-loop: this Chatwoot message was imported FROM a Zalo native send.
     // Re-sending it would deliver a duplicate to the customer.
     if (await this.mapping.findByChatwootMessageId(evt.chatwootMessageId)) return;
+    if (evt.content.startsWith("📱 từ app Zalo") || evt.content.startsWith("📱 từ Zalo")) {
+      this.log.info({ event: "outbound_skipped", reason: "self_prefix_echo", chatwootMessageId: evt.chatwootMessageId }, "outbound skipped self-prefix echo");
+      return;
+    }
 
     const identifier = this.inboxIdentifierForId(evt.inboxId);
     if (!identifier) { this.log.warn({ event: "outbound_skipped", reason: "no_inbox_identifier", inboxId: evt.inboxId, chatwootMessageId: evt.chatwootMessageId }, "outbound skipped"); return; }

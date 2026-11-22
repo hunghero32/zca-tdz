@@ -154,6 +154,8 @@ export class InboundHandler {
     if (msg.isSelf) { await this.processSelf(accountId, identifier, sourceId, msg); return; }
 
     let conversationId = await this.resolveConversation(accountId, identifier, sourceId, msg);
+    // Anti-loop: in case backfill during resolveConversation already imported this message
+    if (await this.mapping.findByZaloMsgId(accountId, msg.msgId)) return;
     if (msg.kind === ZaloThreadKind.OaUser) this.consult?.onInbound(accountId, sourceId).catch((err) => this.log.warn({ event: "consult_failed", accountId, sourceId, err }, "consultation onInbound failed"));
     if (msg.kind === ZaloThreadKind.OaUser) this.infoRequest?.onInbound(accountId, sourceId).catch((err) => this.log.warn({ event: "info_request_failed", accountId, sourceId, err }, "info request onInbound failed"));
     const built = await this.buildOutput(accountId, msg);
@@ -208,6 +210,8 @@ export class InboundHandler {
     if (await this.mapping.findByZaloMsgId(accountId, msg.msgId)) return;
 
     const conversationId = await this.resolveConversation(accountId, identifier, sourceId, msg);
+    // Anti-loop: in case backfill during resolveConversation already imported this message
+    if (await this.mapping.findByZaloMsgId(accountId, msg.msgId)) return;
     const built = await this.buildOutput(accountId, msg);
     const content = built.content ? `${SELF_PREFIX}\n${built.content}` : SELF_PREFIX;
     const inReplyTo = await this.resolveQuote(accountId, msg);

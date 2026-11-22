@@ -37,9 +37,15 @@ export class ChatwootAppClient {
     conversationId: number,
     content: string,
     attachments?: Attachment[],
-    opts: { inReplyTo?: number } = {},
+    opts: { inReplyTo?: number; echo?: boolean } = {},
   ): Promise<{ id: number }> {
-    return this.postMessage(conversationId, { content, messageType: "outgoing", attachments, inReplyTo: opts.inReplyTo });
+    return this.postMessage(conversationId, {
+      content,
+      messageType: "outgoing",
+      attachments,
+      inReplyTo: opts.inReplyTo,
+      echo: opts.echo ?? true,
+    });
   }
 
   /**
@@ -71,18 +77,19 @@ export class ChatwootAppClient {
 
   private async postMessage(
     conversationId: number,
-    opts: { content: string; messageType: "incoming" | "outgoing"; attachments?: Attachment[]; inReplyTo?: number },
+    opts: { content: string; messageType: "incoming" | "outgoing"; attachments?: Attachment[]; inReplyTo?: number; echo?: boolean },
   ): Promise<{ id: number }> {
     if (!this.enabled) {
       throw new Error("ChatwootAppClient not configured (CHATWOOT_API_ACCESS_TOKEN / CHATWOOT_ACCOUNT_ID)");
     }
     const url = `${this.baseUrl}/api/v1/accounts/${this.accountId}/conversations/${conversationId}/messages`;
     const token = this.accessToken as string;
-    const { content, messageType, attachments, inReplyTo } = opts;
+    const { content, messageType, attachments, inReplyTo, echo } = opts;
 
     if (attachments && attachments.length > 0) {
       const fields: Record<string, string> = { content, message_type: messageType, private: "false" };
       if (inReplyTo != null) fields["content_attributes[in_reply_to]"] = String(inReplyTo);
+      if (echo) fields["content_attributes[echo]"] = "true";
       const { body, contentType } = buildMultipart(
         fields,
         attachments.map((a) => ({ name: "attachments[]", filename: a.filename, contentType: a.contentType, content: a.content })),
@@ -97,7 +104,10 @@ export class ChatwootAppClient {
     }
 
     const payload: Record<string, unknown> = { content, message_type: messageType, private: false };
-    if (inReplyTo != null) payload.content_attributes = { in_reply_to: inReplyTo };
+    const contentAttributes: Record<string, unknown> = {};
+    if (inReplyTo != null) contentAttributes.in_reply_to = inReplyTo;
+    if (echo) contentAttributes.echo = true;
+    if (Object.keys(contentAttributes).length > 0) payload.content_attributes = contentAttributes;
     const res = await request(url, {
       method: "POST",
       headers: { "content-type": "application/json", api_access_token: token },
