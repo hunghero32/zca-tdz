@@ -7,7 +7,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && cp -r src/store/migrations dist/store/ && mkdir -p dist/admin && cp -r src/admin/public dist/admin/",
     "start": "node dist/main.js",
     "dev": "tsx watch src/main.ts",
     "migrate": "tsx src/store/migrate.ts",
