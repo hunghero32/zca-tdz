@@ -175,7 +175,12 @@ async function main(): Promise<void> {
     notifyOutbound,
     archive,
   );
-  const reactions = new ReactionHandler(conversations, mapping, appClientFor);
+  const reactions = new ReactionHandler(
+    conversations,
+    mapping,
+    appClientFor,
+    (accountId, uid) => sessions.getUserInfo(accountId, uid).catch(() => null),
+  );
   const undos = new UndoHandler(conversations, mapping, appClientFor);
 
   // Wake the worker the instant a job is enqueued, so processing does not wait for the poll tick.
