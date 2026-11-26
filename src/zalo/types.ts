@@ -38,6 +38,7 @@ export interface IncomingMessage {
   msgId: string;
   senderUid: string;
   senderName: string;
+  senderAvatar?: string;
   text: string;                  // human-readable body (caption for media, text otherwise)
   classified: ClassifiedMessage; // drives rendering: text / media / fallback
   isSelf: boolean;
@@ -102,12 +103,15 @@ export function normalizeIncoming(raw: any): IncomingMessage {
   const classified = classifyMessage(data);
   const text = classified.kind === "media" ? classified.caption : classified.text;
   const quoteId = data.quote?.globalMsgId;
+  const rawAvt = data.avatar || data.avt || data.thumb || raw.avatar;
+  const senderAvatar = rawAvt ? String(rawAvt) : undefined;
   return {
     kind,
     threadId: String(raw.threadId),
     msgId: String(data.msgId),
     senderUid: String(data.uidFrom ?? ""),
     senderName: String(data.dName ?? ""),
+    ...(senderAvatar ? { senderAvatar } : {}),
     text,
     classified,
     isSelf: raw.isSelf === true || data.uidFrom === "0",

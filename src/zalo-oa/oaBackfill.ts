@@ -3,6 +3,8 @@ import { RecentChat } from "./historyClient.js";
 import { toIncomingMessage } from "./backfillMessage.js";
 import { EventLog, NOOP_LOG } from "../logging/eventLog.js";
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export interface HistoryClient {
   listRecentChat(oaId: string, offset: number, count: number): Promise<RecentChat[]>;
   getConversationMessages(userId: string, offset: number, count: number): Promise<unknown[]>;
@@ -11,18 +13,24 @@ export interface HistoryClient {
 export interface BackfillCaps { maxConversations: number; maxMessagesPerConversation: number; pageSize: number }
 export interface BackfillResult { enqueued: number; maxTimeMs: number; capped: boolean }
 
-export const DEFAULT_CAPS: BackfillCaps = { maxConversations: 50, maxMessagesPerConversation: 100, pageSize: 10 };
+export const DEFAULT_CAPS: BackfillCaps = { maxConversations: 200, maxMessagesPerConversation: 20, pageSize: 10 };
 
 /** Collect up to `maxConversations` recent conversations (no early stop — order is not guaranteed). */
-async function collectConversations(client: HistoryClient, oaId: string, caps: BackfillCaps): Promise<RecentChat[]> {
+async function collectConversations(client: HistoryClient, oaId: string, caps: BackfillCaps, log: EventLog = NOOP_LOG): Promise<RecentChat[]> {
   const out: RecentChat[] = [];
   let offset = 0;
   while (out.length < caps.maxConversations) {
-    const page = await client.listRecentChat(oaId, offset, caps.pageSize);
-    if (page.length === 0) break;
-    out.push(...page);
-    offset += page.length;
-    if (page.length < caps.pageSize) break;
+    try {
+      const page = await client.listRecentChat(oaId, offset, caps.pageSize);
+      if (page.length === 0) break;
+      out.push(...page);
+      offset += page.length;
+      if (page.length < caps.pageSize) break;
+      await sleep(15);
+    } catch (err) {
+      log.warn({ event: "collect_conversations_error", offset, err }, "Failed to fetch page of recent chats");
+      break;
+    }
   }
   return out.slice(0, caps.maxConversations);
 }
@@ -36,7 +44,7 @@ export async function runBackfill(
   caps: BackfillCaps,
   log: EventLog = NOOP_LOG,
 ): Promise<BackfillResult> {
-  const conversations = await collectConversations(client, oaId, caps);
+  const conversations = await collectConversations(client, oaId, caps, log);
   let enqueued = 0;
   let maxTimeMs = sinceMs;
   // LIMITATION: `listrecentchat` order is not guaranteed, so when the conversation cap is hit
@@ -52,23 +60,29 @@ export async function runBackfill(
     let seen = 0;
     let stop = false;
     while (!stop && seen < caps.maxMessagesPerConversation) {
-      const page = await client.getConversationMessages(conv.userId, offset, caps.pageSize);
-      if (page.length === 0) break;
-      for (const raw of page) {
-        const conv2 = toIncomingMessage(raw, conv.userId);
-        if (!conv2) continue;
-        if (conv2.timeMs <= sinceMs) { stop = true; break; } // within a conversation, order IS guaranteed
-        enqueue(conv2.msg);
-        enqueued += 1;
-        if (conv2.timeMs > maxTimeMs) maxTimeMs = conv2.timeMs;
-        seen += 1;
-        if (seen >= caps.maxMessagesPerConversation) { capped = true; stop = true; break; }
+      try {
+        const page = await client.getConversationMessages(conv.userId, offset, caps.pageSize);
+        if (page.length === 0) break;
+        for (const raw of page) {
+          const conv2 = toIncomingMessage(raw, conv.userId);
+          if (!conv2) continue;
+          if (conv2.timeMs <= sinceMs) { stop = true; break; } // within a conversation, order IS guaranteed
+          enqueue(conv2.msg);
+          enqueued += 1;
+          if (conv2.timeMs > maxTimeMs) maxTimeMs = conv2.timeMs;
+          seen += 1;
+          if (seen >= caps.maxMessagesPerConversation) { capped = true; stop = true; break; }
+        }
+        offset += page.length;
+        if (page.length < caps.pageSize) break;
+      } catch (err) {
+        log.warn({ event: "backfill_conv_error", userId: conv.userId, err }, "Failed to fetch messages for conversation");
+        break;
       }
-      offset += page.length;
-      if (page.length < caps.pageSize) break;
     }
+    await sleep(20);
   }
 
-  log.info({ event: "backfill_done", oaId, enqueued, maxTimeMs, capped }, "OA backfill complete");
+  log.info({ event: "backfill_done", oaId, conversationsCount: conversations.length, enqueued, maxTimeMs, capped }, "OA backfill complete");
   return { enqueued, maxTimeMs, capped };
 }

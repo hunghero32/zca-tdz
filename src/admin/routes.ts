@@ -13,6 +13,8 @@ export interface AdminRouteOptions {
   // Whether a Chatwoot Application-API token is configured (from Settings DB).
   // Drives the admin UI's "token not configured" banner.
   chatwootTokenConfigured?: boolean;
+  triggerAvatarSync?: () => Promise<any>;
+  getAvatarSyncStatus?: () => any;
 }
 
 type AccountCreateBody = {
@@ -216,6 +218,25 @@ export function registerAdminRoutes(
       if (!opts.applyProxy) return reply.code(400).send({ ok: false, error: "apply_proxy_unavailable" });
       await opts.applyProxy(id);
       return reply.send({ ok: true });
+    },
+  );
+
+  app.post(
+    "/admin/api/sync-avatars",
+    { preHandler: write },
+    async (_req, reply) => {
+      if (!opts.triggerAvatarSync) return reply.code(400).send({ ok: false, error: "sync_unavailable" });
+      const status = await opts.triggerAvatarSync();
+      return reply.send({ ok: true, status });
+    },
+  );
+
+  app.get(
+    "/admin/api/sync-avatars",
+    { preHandler: guard },
+    async (_req, reply) => {
+      if (!opts.getAvatarSyncStatus) return reply.code(400).send({ ok: false, error: "sync_unavailable" });
+      return reply.send({ ok: true, status: opts.getAvatarSyncStatus() });
     },
   );
 }

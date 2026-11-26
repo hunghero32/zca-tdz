@@ -1,0 +1,50 @@
+version: "3.8"
+
+services:
+  bridge-db:
+    image: postgres:16-alpine
+    container_name: zca-bridge-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: f9bb4d151f6a48aa48a5bf0a2b097537
+      POSTGRES_DB: zca_bridge
+    volumes:
+      - bridge_db_data:/var/lib/postgresql/data
+    networks:
+      - bridge_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d zca_bridge"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  bridge:
+    build: .
+    image: zca-bridge:zca-tdz
+    container_name: zca-bridge
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:4000:4000"
+    env_file:
+      - /www/wwwroot/admin/zca-bridge/.env
+    volumes:
+      - /www/wwwroot/admin/zca-bridge/data:/app/data
+      - /www/wwwroot/admin/zca-bridge/dist:/app/dist
+    depends_on:
+      bridge-db:
+        condition: service_healthy
+    networks:
+      - bridge_net
+      - chatwoot_net
+
+volumes:
+  bridge_db_data:
+    external: true
+    name: zca-bridge_bridge_db_data
+
+networks:
+  bridge_net:
+  chatwoot_net:
+    external: true
+    name: chatwoot_default

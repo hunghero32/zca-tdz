@@ -62,7 +62,7 @@ export class ChatwootClient {
   async getContact(
     identifier: string,
     sourceId: string
-  ): Promise<{ sourceId: string } | null> {
+  ): Promise<{ sourceId: string; name?: string } | null> {
     const res = await request(
       `${this.inboxPath(identifier)}/contacts/${sourceId}`,
       { method: "GET" }
@@ -72,8 +72,8 @@ export class ChatwootClient {
       return null;
     }
     if (res.statusCode >= 400) { res.body.dump(); throw new Error(`getContact failed: ${res.statusCode}`); }
-    res.body.dump();
-    return { sourceId };
+    const json = (await res.body.json()) as any;
+    return { sourceId, name: typeof json?.name === "string" ? json.name : undefined };
   }
 
   async createConversation(

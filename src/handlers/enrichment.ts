@@ -21,36 +21,40 @@ export function makeEnricher(
     sourceId: string,
     identifier: string,
     senderUid: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const { kind, threadId } = decodeSourceId(sourceId);
     if (kind === ThreadKind.Group) {
       try {
         const group = await sessions.getGroupInfo(accountId, threadId);
         await chatwoot.updateContact(identifier, sourceId, { name: group.name, avatarUrl: group.avatar });
         log.info({ event: "contact_enriched", accountId, sourceId, source: "zca-group" }, "group contact enriched");
+        return true;
       } catch {
         // No zca session or the group lookup failed — leave the current name in place.
+        return false;
       }
-      return;
     }
+    const targetUid = threadId || senderUid;
     try {
-      const profile = await sessions.getUserInfo(accountId, senderUid);
+      const profile = await sessions.getUserInfo(accountId, targetUid);
       await chatwoot.updateContact(identifier, sourceId, { name: profile.displayName, avatarUrl: profile.avatar });
       log.info({ event: "contact_enriched", accountId, sourceId, source: "zca" }, "contact enriched");
-      return;
+      return true;
     } catch {
       // No zca session (e.g. an OA account) or the zalo lookup failed — fall back to the OA API.
     }
-    if (!oaProfile) return;
+    if (!oaProfile) return false;
     try {
-      const p = await oaProfile(accountId, senderUid);
-      if (p?.displayName) {
+      const p = await oaProfile(accountId, targetUid);
+      if (p?.displayName && !/^[0-9]+$/.test(p.displayName)) {
         await chatwoot.updateContact(identifier, sourceId, { name: p.displayName, avatarUrl: p.avatar });
-        log.info({ event: "contact_enriched", accountId, sourceId, source: "oa" }, "contact enriched");
+        log.info({ event: "contact_enriched", accountId, sourceId, source: "oa", name: p.displayName }, "contact enriched");
         if (p.sharedInfo) await applyContactInfo(chatwoot, identifier, sourceId, p.sharedInfo, log);
+        return true;
       }
     } catch {
       // best-effort; leave the temporary name in place
     }
+    return false;
   };
 }

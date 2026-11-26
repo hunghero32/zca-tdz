@@ -13,6 +13,8 @@ export function parseOutgoingWebhook(body: any): OutgoingEvent | null {
   if (!body || body.event !== "message_created") return null;
   if (body.message_type !== "outgoing") return null;
   if (body.private === true) return null;
+  if (body.content_attributes?.echo === true || body.content_attributes?.echo === "true") return null;
+  if (typeof body.content === "string" && (body.content.startsWith("📱 từ app Zalo") || body.content.startsWith("📱 từ Zalo"))) return null;
   const contactInbox = body?.conversation?.contact_inbox;
   const sourceId = contactInbox?.source_id;
   if (!sourceId) return null;

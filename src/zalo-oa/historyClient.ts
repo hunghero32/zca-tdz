@@ -47,6 +47,26 @@ export async function getConversationMessages(
   offset: number,
   count: number,
 ): Promise<unknown[]> {
-  const json = await getJson(`${CONV_URL}?data=${encodeData({ user_id: userId, offset, count })}`, getToken);
+  const safeCount = Math.min(Math.max(count, 1), 10);
+  const json = await getJson(`${CONV_URL}?data=${encodeData({ user_id: userId, offset, count: safeCount })}`, getToken);
   return Array.isArray(json?.data) ? json.data : [];
+}
+
+/** Fetch up to `limit` recent messages across pages (newest first). */
+export async function getRecentConversationMessages(
+  getToken: () => Promise<string>,
+  userId: string,
+  limit: number = 30,
+): Promise<unknown[]> {
+  const out: unknown[] = [];
+  let offset = 0;
+  while (out.length < limit) {
+    const batchSize = Math.min(limit - out.length, 10);
+    const page = await getConversationMessages(getToken, userId, offset, batchSize);
+    if (!page || page.length === 0) break;
+    out.push(...page);
+    offset += page.length;
+    if (page.length < batchSize) break;
+  }
+  return out;
 }
