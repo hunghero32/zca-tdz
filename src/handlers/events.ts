@@ -33,7 +33,7 @@ export class ReactionHandler {
     const reacted = await this.mapping.findByZaloMsgId(accountId, evt.reactedMsgId);
     let who = "Ai đó";
     if (evt.isSelf) {
-      who = "Bạn (từ app Zalo)";
+      who = "Bạn";
     } else if (evt.senderName && !/^[0-9]+$/.test(evt.senderName)) {
       who = evt.senderName;
     } else if (evt.senderUid) {

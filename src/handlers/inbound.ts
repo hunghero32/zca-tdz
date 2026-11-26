@@ -19,8 +19,8 @@ interface ConsultHook { onInbound(accountId: number, sourceId: string): Promise<
 interface InfoRequestHook { onInbound(accountId: number, sourceId: string): Promise<void>; }
 interface WatermarkHook { onRelayed(accountId: number, timeMs: number): void; }
 
-// Prefix on messages the operator sent directly from the native Zalo app.
-const SELF_PREFIX = "📱 từ app Zalo";
+// Prefix on messages the operator sent directly from the native Zalo app (empty to keep chat clean).
+const SELF_PREFIX = "";
 
 // Hiển thị khi chưa lấy được tên nhóm thật (lookup lỗi) — vẫn tốt hơn tên một thành viên.
 const GROUP_FALLBACK_NAME = "Nhóm Zalo";
@@ -213,7 +213,7 @@ export class InboundHandler {
     // Anti-loop: in case backfill during resolveConversation already imported this message
     if (await this.mapping.findByZaloMsgId(accountId, msg.msgId)) return;
     const built = await this.buildOutput(accountId, msg);
-    const content = built.content ? `${SELF_PREFIX}\n${built.content}` : SELF_PREFIX;
+    const content = built.content ? (SELF_PREFIX ? `${SELF_PREFIX}\n${built.content}` : built.content) : (SELF_PREFIX || "");
     const inReplyTo = await this.resolveQuote(accountId, msg);
     const appClient = await this.appClientFor(accountId);
 
@@ -325,7 +325,7 @@ export class InboundHandler {
           const appClient = await this.appClientFor(accountId);
           let created: { id: number };
           if (conv.msg.isSelf && appClient.enabled) {
-            const content = built.content ? `${SELF_PREFIX}\n${built.content}` : SELF_PREFIX;
+            const content = built.content ? (SELF_PREFIX ? `${SELF_PREFIX}\n${built.content}` : built.content) : (SELF_PREFIX || "");
             created = await appClient.createOutgoingMessage(conversationId, content, built.attachments);
           } else {
             created = await this.chatwoot.createMessage(identifier, sourceId, conversationId, built);
